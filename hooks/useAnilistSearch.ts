@@ -5,7 +5,7 @@ import type { AnilistSearchResult } from '@/types/anilist'
 
 const MIN_LENGTH = 2
 
-export function useAnilistSearch(query: string) {
+export function useAnilistSearch(query: string, includeAdult: boolean) {
   const trimmed = query.trim()
   const debouncedQuery = useDebouncedValue(trimmed, 500)
 
@@ -28,7 +28,7 @@ export function useAnilistSearch(query: string) {
     setLoading(true)
     setError(null)
 
-    searchWebtoons(debouncedQuery, controller.signal)
+    searchWebtoons(debouncedQuery, { includeAdult }, controller.signal)
       .then((response) => {
         if (controller.signal.aborted) return
         setResults(response.results)
@@ -44,7 +44,7 @@ export function useAnilistSearch(query: string) {
     // Si la recherche change pendant que la requête est en route,
     // on l'annule : sa réponse (périmée) ne doit pas écraser la nouvelle.
     return () => controller.abort()
-  }, [debouncedQuery])
+  }, [debouncedQuery, includeAdult]) // relance aussi si la préférence 18+ change
 
   // L'utilisateur est en train de taper : on considère que ça "charge" déjà
   const isTyping = trimmed !== debouncedQuery && trimmed.length >= MIN_LENGTH

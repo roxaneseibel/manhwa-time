@@ -1,6 +1,7 @@
 import { Stack } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { StatusBar } from 'expo-status-bar'
+import { ProfileProvider } from '@/providers/ProfileProvider'
 import { SessionProvider, useSession } from '@/providers/SessionProvider'
 
 // Garder l'écran de démarrage affiché tant qu'on ne sait pas si l'utilisateur est connecté
@@ -10,7 +11,9 @@ export default function RootLayout() {
   return (
     <SessionProvider>
       <StatusBar style="auto" />
-      <RootNavigator />
+      <ProfileProvider>
+        <RootNavigator />
+      </ProfileProvider>
     </SessionProvider>
   )
 }

@@ -3,10 +3,13 @@ import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-nativ
 import { SearchBar } from '@/components/SearchBar'
 import { WebtoonSearchItem } from '@/components/WebtoonSearchItem'
 import { useAnilistSearch } from '@/hooks/useAnilistSearch'
+import { useProfile } from '@/providers/ProfileProvider'
 
 export default function SearchScreen() {
   const [query, setQuery] = useState('')
-  const { results, isFuzzy, loading, error, tooShort } = useAnilistSearch(query)
+  const { profile } = useProfile()
+  const includeAdult = profile?.show_adult_content ?? false
+  const { results, isFuzzy, loading, error, tooShort } = useAnilistSearch(query, includeAdult)
 
   // Ce qu'on affiche quand la liste est vide
   function renderEmpty() {
@@ -37,7 +40,7 @@ export default function SearchScreen() {
       <FlatList
         data={results}
         keyExtractor={(item) => String(item.id)}
-        renderItem={({ item }) => <WebtoonSearchItem item={item} />}
+        renderItem={({ item }) => <WebtoonSearchItem item={item} query={query} />}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListHeaderComponent={renderHeader}
         ListEmptyComponent={renderEmpty}
