@@ -52,3 +52,27 @@ if (readError) {
   process.exit(1)
 }
 console.log('✅ En base :', JSON.stringify(webtoon, null, 2))
+
+// 4. Les chapitres : créés tout de suite, dates remplies en arrière-plan
+async function countChapters() {
+  const all = await supabase.from('chapter').select('id', { count: 'exact', head: true }).eq('webtoon_id', data.webtoonId)
+  const dated = await supabase
+    .from('chapter')
+    .select('id', { count: 'exact', head: true })
+    .eq('webtoon_id', data.webtoonId)
+    .not('published_at', 'is', null)
+  return `${all.count} chapitres, dont ${dated.count} avec une date de sortie`
+}
+
+console.log('✅ Chapitres juste après l’appel :', await countChapters())
+console.log('⏳ Attente de 15 s (dates récupérées en arrière-plan)...')
+await new Promise((resolve) => setTimeout(resolve, 15_000))
+console.log('✅ Chapitres 15 s plus tard :', await countChapters())
+
+const { data: sample } = await supabase
+  .from('chapter')
+  .select('number, published_at')
+  .eq('webtoon_id', data.webtoonId)
+  .order('number', { ascending: false })
+  .limit(3)
+console.log('   Derniers chapitres :', sample)

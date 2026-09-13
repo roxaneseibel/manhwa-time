@@ -1,6 +1,7 @@
-import { FunctionsHttpError } from '@supabase/supabase-js'
+import { importWebtoon } from '@/lib/catalog'
+import { unmarkAllChapters } from '@/lib/chapterTracking'
 import { supabase } from '@/lib/supabase'
-import type { ReadingEntry, ReadingStatus } from '@/types/readingProgress'
+import type { LibraryEntry, ReadingEntry, ReadingStatus } from '@/types/readingProgress'
 
 export const READING_STATUS_LABELS: Record<ReadingStatus, string> = {
   reading: 'En cours',
@@ -61,23 +62,6 @@ export async function addToList(anilistId: number, userId: string, status: Readi
   return toEntry(data as EntryRow)
 }
 
-async function importWebtoon(anilistId: number): Promise<string> {
-  const { data, error } = await supabase.functions.invoke<{ webtoonId: string }>('import-webtoon', {
-    body: { anilistId },
-  })
-
-  if (error) {
-    // Si la fonction a répondu avec un code d'erreur, son message est dans le corps de la réponse
-    if (error instanceof FunctionsHttpError) {
-      const body = await error.context.json().catch(() => null)
-      if (body?.error) throw new Error(body.error)
-    }
-    throw new Error(`Import impossible : ${error.message}`)
-  }
-
-  return data!.webtoonId
-}
-
 // ---------------------------------------------------------------------------
 // Modifier le statut / retirer de la liste
 // ---------------------------------------------------------------------------
@@ -93,7 +77,43 @@ export async function updateEntryStatus(entryId: string, status: ReadingStatus):
   return toEntry(data as EntryRow)
 }
 
-export async function removeEntry(entryId: string): Promise<void> {
-  const { error } = await supabase.from('reading_progress').delete().eq('id', entryId)
+export async function removeEntry(entry: ReadingEntry): Promise<void> {
+  // D'abord les chapitres lus, sinon ils réapparaîtraient si on rajoute le titre
+  await unmarkAllChapters(entry.webtoonId)
+
+  const { error } = await supabase.from('reading_progress').delete().eq('id', entry.id)
   if (error) throw new Error(error.message)
+}
+
+// ---------------------------------------------------------------------------
+// Ma liste complète, la plus récemment modifiée en premier
+// ---------------------------------------------------------------------------
+type LibraryRow = EntryRow & {
+  updated_at: string
+  webtoon: { anilist_id: number | null; title: string; cover_url: string | null; total_chapters: number | null }
+}
+
+export async function getMyList(): Promise<LibraryEntry[]> {
+  const { data, error } = await supabase
+    .from('reading_progress')
+    .select(`${ENTRY_COLUMNS}, updated_at, webtoon(anilist_id, title, cover_url, total_chapters)`)
+    .order('updated_at', { ascending: false })
+
+  if (error) throw new Error(error.message)
+
+  return (data as unknown as LibraryRow[]).map((row) => ({
+    ...toEntry(row),
+    updatedAt: row.updated_at,
+    webtoon: {
+      anilistId: row.webtoon.anilist_id,
+      title: row.webtoon.title,
+      coverUrl: row.webtoon.cover_url,
+      totalChapters: row.webtoon.total_chapters,
+    },
+  }))
+}
+
+// 12 → "12", 10.5 → "10.5"
+export function formatChapter(chapter: number) {
+  return Number.isInteger(chapter) ? String(chapter) : chapter.toFixed(1)
 }

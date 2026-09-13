@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { addToList, getEntryByAnilistId, removeEntry, updateEntryStatus } from '@/lib/readingProgress'
 import { useSession } from '@/providers/SessionProvider'
 import type { ReadingEntry, ReadingStatus } from '@/types/readingProgress'
@@ -13,9 +13,13 @@ export function useReadingEntry(anilistId: number) {
   const [saving, setSaving] = useState(false)  // une action est en cours
   const [error, setError] = useState<string | null>(null)
 
+  // Incrémenter ce compteur relance le chargement (voir reload)
+  const [reloadKey, setReloadKey] = useState(0)
+
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    // Spinner seulement au premier chargement : un rechargement reste discret
+    if (reloadKey === 0) setLoading(true)
     setError(null)
 
     getEntryByAnilistId(anilistId)
@@ -32,7 +36,10 @@ export function useReadingEntry(anilistId: number) {
     return () => {
       cancelled = true
     }
-  }, [anilistId, userId])
+  }, [anilistId, userId, reloadKey])
+
+  // Recharge l'entrée depuis la base (ex : cocher un chapitre a ajouté le titre à la liste)
+  const reload = useCallback(() => setReloadKey((key) => key + 1), [])
 
   // Exécute une action, gère "saving" et les erreurs, puis met l'entrée à jour
   async function run(action: () => Promise<ReadingEntry | null>) {
@@ -57,10 +64,13 @@ export function useReadingEntry(anilistId: number) {
 
   function remove() {
     return run(async () => {
-      if (entry) await removeEntry(entry.id)
+      if (entry) await removeEntry(entry)
       return null
     })
   }
 
-  return { entry, loading, saving, error, setStatus, remove }
+  return { entry, loading, saving, error, setStatus, remove, reload }
 }
+
+// Le type de ce que renvoie le hook, pour le passer en props à d'autres composants
+export type ReadingEntryState = ReturnType<typeof useReadingEntry>

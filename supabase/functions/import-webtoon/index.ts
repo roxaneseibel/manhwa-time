@@ -12,6 +12,7 @@
 // Types des APIs spécifiques au runtime Supabase (Deno.serve, etc.)
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "@supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Si la fiche a été importée il y a moins de 24 h, on ne réinterroge pas AniList.
 // Important : toutes les Edge Functions de Supabase partagent des adresses IP,
@@ -19,6 +20,9 @@ import { withSupabase } from "@supabase/server";
 const REFRESH_AFTER_MS = 24 * 60 * 60 * 1000;
 
 const EXTERNAL_TIMEOUT_MS = 10_000;
+
+// Historique MangaUpdates : 100 sorties par page, 10 pages maximum
+const MU_MAX_PAGES = 10;
 
 // AniList → valeurs acceptées par la colonne webtoon.status
 const STATUS_MAP: Record<string, string> = {
@@ -63,11 +67,14 @@ export default {
     // -------------------------------------------------------------------------
     const { data: existing } = await ctx.supabaseAdmin
       .from("webtoon")
-      .select("id, updated_at")
+      .select("id, updated_at, chapters_synced_at")
       .eq("anilist_id", anilistId)
       .maybeSingle();
 
-    if (existing && Date.now() - new Date(existing.updated_at).getTime() < REFRESH_AFTER_MS) {
+    const isFresh = existing && Date.now() - new Date(existing.updated_at).getTime() < REFRESH_AFTER_MS;
+
+    // Fiche récente ET chapitres déjà créés : rien à faire
+    if (isFresh && existing.chapters_synced_at) {
       return Response.json({ webtoonId: existing.id, refreshed: false });
     }
 
@@ -88,6 +95,7 @@ export default {
 
     // MangaBaka est facultatif : en cas d'échec, on importe quand même
     const mangabaka = await fetchMangabaka(anilistId).catch(() => null);
+    const totalChapters = resolveTotalChapters(media, mangabaka?.totalChapters ?? null);
 
     // -------------------------------------------------------------------------
     // 4. Créer ou mettre à jour la fiche ("upsert")
@@ -105,7 +113,7 @@ export default {
           country_of_origin: media.countryOfOrigin,
           start_year: media.startDate.year,
           status: STATUS_MAP[media.status ?? ""] ?? "ongoing",
-          total_chapters: resolveTotalChapters(media, mangabaka?.totalChapters ?? null),
+          total_chapters: totalChapters,
           average_score: media.averageScore,
           is_adult: media.isAdult,
           mangaupdates_id: mangabaka?.mangaUpdatesId ?? null,
@@ -141,6 +149,33 @@ export default {
       }
     }
 
+    // -------------------------------------------------------------------------
+    // 6. Créer les chapitres 1 → total (ceux qui existent déjà sont ignorés)
+    // -------------------------------------------------------------------------
+    let chaptersError = null;
+    if (totalChapters != null && totalChapters > 0) {
+      chaptersError = await createChapters(ctx.supabaseAdmin, webtoon.id, totalChapters);
+      if (chaptersError) console.error("insert chapter", chaptersError);
+
+      // Les dates de sortie demandent plusieurs requêtes à MangaUpdates :
+      // on les récupère APRÈS avoir répondu à l'app, pour ne pas la faire attendre.
+      // waitUntil garde la fonction en vie jusqu'à la fin de cette tâche.
+      if (!chaptersError && mangabaka?.mangaUpdatesId) {
+        EdgeRuntime.waitUntil(
+          syncReleaseDates(ctx.supabaseAdmin, webtoon.id, mangabaka.mangaUpdatesId, totalChapters),
+        );
+      }
+    }
+
+    // Synchronisation tentée (même si le nombre de chapitres est inconnu) :
+    // évite de tout réimporter à chaque ouverture ; nouvel essai après 24 h
+    if (!chaptersError) {
+      await ctx.supabaseAdmin
+        .from("webtoon")
+        .update({ chapters_synced_at: new Date().toISOString() })
+        .eq("id", webtoon.id);
+    }
+
     return Response.json({ webtoonId: webtoon.id, refreshed: true });
   }),
 };
@@ -151,6 +186,91 @@ export default {
 
 function jsonError(status: number, message: string) {
   return Response.json({ error: message }, { status });
+}
+
+// Crée les lignes "chapter" 1 → total. Renvoie une erreur, ou null si tout va bien.
+async function createChapters(admin: SupabaseClient, webtoonId: string, total: number) {
+  const rows = Array.from({ length: Math.floor(total) }, (_, i) => ({
+    webtoon_id: webtoonId,
+    number: i + 1,
+  }));
+
+  // Par paquets de 1000 pour ne pas envoyer une requête géante (Tower of God : 650+)
+  for (let start = 0; start < rows.length; start += 1000) {
+    const { error } = await admin
+      .from("chapter")
+      .upsert(rows.slice(start, start + 1000), {
+        onConflict: "webtoon_id,number",
+        ignoreDuplicates: true, // chapitres déjà existants : on n'y touche pas
+      });
+    if (error) return error;
+  }
+  return null;
+}
+
+// Récupère l'historique des sorties sur MangaUpdates et remplit chapter.published_at
+// avec la PREMIÈRE date connue de chaque chapitre (les rééditions sont plus tardives).
+async function syncReleaseDates(admin: SupabaseClient, webtoonId: string, muSeriesId: number, total: number) {
+  const firstRelease = new Map<number, string>();
+
+  try {
+    for (let page = 1; page <= MU_MAX_PAGES; page++) {
+      const response = await fetch("https://api.mangaupdates.com/v1/releases/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          search: String(muSeriesId),
+          search_type: "series",
+          orderby: "date",
+          asc: "asc", // de la plus ancienne à la plus récente
+          perpage: 100, // maximum autorisé
+          page,
+        }),
+        signal: AbortSignal.timeout(EXTERNAL_TIMEOUT_MS),
+      });
+      if (!response.ok) break;
+
+      const json = await response.json();
+      const results: { record: { chapter: string; release_date: string } }[] = json.results ?? [];
+
+      for (const { record } of results) {
+        for (const number of parseChapterRange(record.chapter)) {
+          if (number <= total && !firstRelease.has(number)) {
+            firstRelease.set(number, record.release_date);
+          }
+        }
+      }
+
+      if (results.length < 100) break; // dernière page
+      await new Promise((resolve) => setTimeout(resolve, 500)); // MangaUpdates demande d'espacer
+    }
+
+    if (firstRelease.size === 0) return;
+
+    const rows = [...firstRelease].map(([number, date]) => ({
+      webtoon_id: webtoonId,
+      number,
+      published_at: date,
+    }));
+
+    // upsert sans ignoreDuplicates → met à jour published_at des chapitres existants
+    const { error } = await admin.from("chapter").upsert(rows, { onConflict: "webtoon_id,number" });
+    if (error) console.error("update published_at", error);
+  } catch (e) {
+    console.error("syncReleaseDates", e);
+  }
+}
+
+// "12" → [12] ; "7-8" → [7, 8] ; "10.5", "Prologue", "S2 c.3" → [] (ignorés)
+function parseChapterRange(text: string): number[] {
+  const match = text.trim().match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+  if (!match) return [];
+
+  const start = Number(match[1]);
+  const end = match[2] ? Number(match[2]) : start;
+  if (end < start || end - start > 50) return []; // plage absurde
+
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
 }
 
 async function fetchAnilistMedia(id: number): Promise<AnilistMedia | null> {

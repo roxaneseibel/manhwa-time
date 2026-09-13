@@ -2,16 +2,17 @@ import { Ionicons } from '@expo/vector-icons'
 import { useState } from 'react'
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import { StatusPicker } from '@/components/StatusPicker'
-import { useReadingEntry } from '@/hooks/useReadingEntry'
+import type { ReadingEntryState } from '@/hooks/useReadingEntry'
 import { READING_STATUS_LABELS } from '@/lib/readingProgress'
 import type { ReadingStatus } from '@/types/readingProgress'
 
 type Props = {
-  anilistId: number
+  // L'état est géré par la fiche (useReadingEntry), qui le partage avec l'onglet Chapitres
+  reading: ReadingEntryState
 }
 
-export function ReadingStatusButton({ anilistId }: Props) {
-  const { entry, loading, saving, error, setStatus, remove } = useReadingEntry(anilistId)
+export function ReadingStatusButton({ reading }: Props) {
+  const { entry, loading, saving, error, setStatus, remove } = reading
   const [pickerOpen, setPickerOpen] = useState(false)
 
   function onSelect(status: ReadingStatus) {
@@ -21,7 +22,7 @@ export function ReadingStatusButton({ anilistId }: Props) {
 
   function onRemove() {
     setPickerOpen(false)
-    Alert.alert('Retirer de ma liste', 'Ta progression sur ce titre sera supprimée.', [
+    Alert.alert('Retirer de ma liste', 'Tes chapitres lus sur ce titre seront aussi supprimés.', [
       { text: 'Annuler', style: 'cancel' },
       { text: 'Retirer', style: 'destructive', onPress: remove },
     ])
