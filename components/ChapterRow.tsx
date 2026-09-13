@@ -8,11 +8,13 @@ type Props = {
   chapter: Chapter
   readCount: number // 0 = non lu, 1 = lu, 2 = ×2...
   onPressCheck: (chapter: Chapter) => void
+  onPress: (chapter: Chapter) => void // ouvrir la page du chapitre
 }
 
-export function ChapterRow({ chapter, readCount, onPressCheck }: Props) {
+export function ChapterRow({ chapter, readCount, onPressCheck, onPress }: Props) {
   return (
-    <View style={styles.row}>
+    // Le rond (Pressable imbriqué) capte son propre appui ; le reste de la ligne ouvre la page
+    <Pressable style={styles.row} onPress={() => onPress(chapter)}>
       <View style={styles.info}>
         <Text style={[styles.title, readCount > 0 && styles.titleRead]}>
           Chapitre {formatChapter(chapter.number)}
@@ -23,7 +25,7 @@ export function ChapterRow({ chapter, readCount, onPressCheck }: Props) {
       </View>
 
       <CheckButton readCount={readCount} onPress={() => onPressCheck(chapter)} />
-    </View>
+    </Pressable>
   )
 }
 

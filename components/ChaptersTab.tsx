@@ -1,8 +1,12 @@
 import { Ionicons } from '@expo/vector-icons'
 import { useMemo, useState, type ReactElement } from 'react'
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
+import { router } from 'expo-router'
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native'
 import { CheckButton, ChapterRow } from '@/components/ChapterRow'
 import { useChapterList } from '@/hooks/useChapterList'
+import { useRefreshOnFocus } from '@/hooks/useRefreshOnFocus'
+import { handleChapterCheck } from '@/lib/chapterAlerts'
+import { getMyChapterRead } from '@/lib/chapterTracking'
 import { formatDate } from '@/lib/dates'
 import { formatChapter } from '@/lib/readingProgress'
 import type { Chapter } from '@/types/chapterTracking'
@@ -23,39 +27,42 @@ export function ChaptersTab({ anilistId, header, onProgressChanged }: Props) {
     [list.chapters, newestFirst],
   )
 
+  // Revenir d'une page chapitre (où on a pu cocher ou noter) → recharger discrètement
+  useRefreshOnFocus(list.refreshSilently)
+
   // Appui sur le rond d'un chapitre
-  function onPressCheck(chapter: Chapter) {
-    const readCount = list.readCounts.get(chapter.id) ?? 0
-    const name = `Chapitre ${formatChapter(chapter.number)}`
+  async function onPressCheck(chapter: Chapter) {
+    let readCount = list.readCounts.get(chapter.id) ?? 0
+    let hasReaction = list.reactedIds.has(chapter.id)
 
-    // Déjà lu → relire ou décocher
+    // Chapitre déjà lu : on relit SA ligne en base au moment de l'appui.
+    // La liste peut être en retard : une note posée sur la page du chapitre
+    // juste avant de revenir n'est peut-être pas encore arrivée au rechargement.
     if (readCount > 0) {
-      Alert.alert(name, readCount > 1 ? `Lu ${readCount} fois.` : 'Lu une fois.', [
-        { text: 'Annuler', style: 'cancel' },
-        { text: 'Marquer comme non lu', style: 'destructive', onPress: () => list.unmark(chapter) },
-        { text: `Relu (×${readCount + 1})`, onPress: () => list.reread(chapter) },
-      ])
-      return
+      try {
+        const fresh = await getMyChapterRead(chapter.id)
+        if (fresh) {
+          readCount = fresh.readCount
+          hasReaction = fresh.rating != null || fresh.emotion != null
+        }
+      } catch {
+        // Hors ligne : on garde ce que la liste sait déjà
+      }
     }
 
-    // Non lu, avec des chapitres non lus avant → proposer de tout cocher
-    const unreadBefore = list.countUnreadBefore(chapter)
-    if (unreadBefore > 0) {
-      Alert.alert(
-        name,
-        unreadBefore === 1
-          ? 'Marquer aussi le chapitre précédent comme lu ?'
-          : `Marquer aussi les ${unreadBefore} chapitres précédents comme lus ?`,
-        [
-          { text: 'Annuler', style: 'cancel' },
-          { text: 'Seulement celui-ci', onPress: () => list.markRead(chapter, false) },
-          { text: 'Oui, tous', onPress: () => list.markRead(chapter, true) },
-        ],
-      )
-      return
-    }
+    handleChapterCheck({
+      chapterNumber: chapter.number,
+      readCount,
+      unreadBefore: list.countUnreadBefore(chapter),
+      hasReaction,
+      onMarkRead: (includePrevious) => list.markRead(chapter, includePrevious),
+      onReread: () => list.reread(chapter),
+      onUnmark: () => list.unmark(chapter),
+    })
+  }
 
-    list.markRead(chapter, false)
+  function openChapter(chapter: Chapter) {
+    router.push(`/chapter/${chapter.id}`)
   }
 
   // Tout ce qui s'affiche au-dessus de la liste des chapitres
@@ -72,6 +79,7 @@ export function ChaptersTab({ anilistId, header, onProgressChanged }: Props) {
             <ContinueCard
               nextChapter={list.nextChapter}
               onPressCheck={() => list.nextChapter && onPressCheck(list.nextChapter)}
+              onPress={() => list.nextChapter && openChapter(list.nextChapter)}
             />
 
             <View style={styles.listTitleRow}>
@@ -108,7 +116,12 @@ export function ChaptersTab({ anilistId, header, onProgressChanged }: Props) {
       extraData={list.readCounts}
       renderItem={({ item }) => (
         <View style={styles.rowContainer}>
-          <ChapterRow chapter={item} readCount={list.readCounts.get(item.id) ?? 0} onPressCheck={onPressCheck} />
+          <ChapterRow
+            chapter={item}
+            readCount={list.readCounts.get(item.id) ?? 0}
+            onPressCheck={onPressCheck}
+            onPress={openChapter}
+          />
         </View>
       )}
       ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -126,7 +139,13 @@ export function ChaptersTab({ anilistId, header, onProgressChanged }: Props) {
   )
 }
 
-function ContinueCard({ nextChapter, onPressCheck }: { nextChapter: Chapter | null; onPressCheck: () => void }) {
+type ContinueCardProps = {
+  nextChapter: Chapter | null
+  onPressCheck: () => void
+  onPress: () => void
+}
+
+function ContinueCard({ nextChapter, onPressCheck, onPress }: ContinueCardProps) {
   if (!nextChapter) {
     return (
       <View style={[styles.card, styles.cardDone]}>
@@ -137,7 +156,7 @@ function ContinueCard({ nextChapter, onPressCheck }: { nextChapter: Chapter | nu
   }
 
   return (
-    <View style={styles.card}>
+    <Pressable style={styles.card} onPress={onPress}>
       <View style={styles.cardInfo}>
         <Text style={styles.cardTitle}>Chapitre {formatChapter(nextChapter.number)}</Text>
         {nextChapter.publishedAt && (
@@ -145,7 +164,7 @@ function ContinueCard({ nextChapter, onPressCheck }: { nextChapter: Chapter | nu
         )}
       </View>
       <CheckButton readCount={0} onPress={onPressCheck} />
-    </View>
+    </Pressable>
   )
 }
 

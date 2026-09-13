@@ -9,6 +9,7 @@ import { ReadingStatusButton } from '@/components/ReadingStatusButton'
 import { WhereToReadSection } from '@/components/WhereToReadSection'
 import { useAsync } from '@/hooks/useAsync'
 import { useReadingEntry } from '@/hooks/useReadingEntry'
+import { useRefreshOnFocus } from '@/hooks/useRefreshOnFocus'
 import {
   COUNTRY_LABELS,
   GENRE_LABELS,
@@ -31,6 +32,8 @@ export default function WebtoonScreen() {
   // L'état "dans ma liste" est géré ICI, puis partagé avec le bouton ET l'onglet Chapitres :
   // cocher un chapitre peut ajouter le titre à la liste, le bouton doit le savoir.
   const reading = useReadingEntry(anilistId)
+  // Cocher un chapitre depuis sa page peut ajouter le titre à la liste : on recharge au retour
+  useRefreshOnFocus(reading.reload)
 
   // Les hooks doivent TOUJOURS être appelés avant les "return" anticipés
   if (loading) {

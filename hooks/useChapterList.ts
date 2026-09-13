@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ensureWebtoonWithChapters } from '@/lib/catalog'
 import {
   getChapters,
-  getMyReadCounts,
+  getMyReads,
   markChaptersRead,
   rereadChapter,
   unmarkChapter,
@@ -14,19 +14,22 @@ import type { Chapter, ReadCounts } from '@/types/chapterTracking'
 export function useChapterList(anilistId: number, onProgressChanged?: () => void) {
   const [chapters, setChapters] = useState<Chapter[]>([])
   const [readCounts, setReadCounts] = useState<ReadCounts>(new Map())
+  const [reactedIds, setReactedIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  // silent : rechargement discret (retour depuis une page chapitre), sans spinner
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     setError(null)
     try {
       // 1. S'assurer que les chapitres existent (import si besoin)
       const webtoonId = await ensureWebtoonWithChapters(anilistId)
       // 2. Chapitres et lectures : indépendants → en parallèle
-      const [chapterList, counts] = await Promise.all([getChapters(webtoonId), getMyReadCounts(webtoonId)])
+      const [chapterList, reads] = await Promise.all([getChapters(webtoonId), getMyReads(webtoonId)])
       setChapters(chapterList)
-      setReadCounts(counts)
+      setReadCounts(reads.readCounts)
+      setReactedIds(reads.reactedIds)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -36,6 +39,10 @@ export function useChapterList(anilistId: number, onProgressChanged?: () => void
 
   useEffect(() => {
     load()
+  }, [load])
+
+  const refreshSilently = useCallback(() => {
+    load(true)
   }, [load])
 
   // Applique un changement tout de suite à l'écran, l'envoie à la base,
@@ -84,7 +91,10 @@ export function useChapterList(anilistId: number, onProgressChanged?: () => void
 
   function unmark(chapter: Chapter) {
     return optimistic(
-      (counts) => counts.delete(chapter.id),
+      (counts) => {
+        counts.delete(chapter.id)
+        setReactedIds((ids) => new Set([...ids].filter((id) => id !== chapter.id)))
+      },
       () => unmarkChapter(chapter.id),
     )
   }
@@ -96,11 +106,13 @@ export function useChapterList(anilistId: number, onProgressChanged?: () => void
   return {
     chapters,
     readCounts,
+    reactedIds,
     readTotal: readCounts.size,
     nextChapter,
     loading,
     error,
     reload: load,
+    refreshSilently,
     countUnreadBefore,
     markRead,
     reread,

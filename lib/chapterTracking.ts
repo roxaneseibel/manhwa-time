@@ -1,6 +1,13 @@
 import { ensureWebtoonWithChapters } from '@/lib/catalog'
 import { supabase } from '@/lib/supabase'
-import type { Chapter, ReadCounts } from '@/types/chapterTracking'
+import type {
+  Chapter,
+  ChapterDetails,
+  ChapterNeighbors,
+  Emotion,
+  MyChapterRead,
+  ReadCounts,
+} from '@/types/chapterTracking'
 
 // Supabase renvoie au maximum 1000 lignes par requête.
 // Pour les titres très longs, on demande les lignes par tranches : 0-999, 1000-1999...
@@ -35,16 +42,25 @@ export async function getChapters(webtoonId: string): Promise<Chapter[]> {
 }
 
 // Mes lectures pour ce webtoon (la RLS ne renvoie que les miennes)
-export async function getMyReadCounts(webtoonId: string): Promise<ReadCounts> {
-  const rows = await fetchAllRows<{ chapter_id: string; read_count: number }>((from, to) =>
+// + les chapitres où j'ai laissé une note ou une émotion
+export async function getMyReads(webtoonId: string): Promise<{ readCounts: ReadCounts; reactedIds: Set<string> }> {
+  const rows = await fetchAllRows<{
+    chapter_id: string
+    read_count: number
+    rating: number | null
+    emotion: string | null
+  }>((from, to) =>
     supabase
       .from('chapter_read')
-      .select('chapter_id, read_count, chapter!inner(webtoon_id)')
+      .select('chapter_id, read_count, rating, emotion, chapter!inner(webtoon_id)')
       .eq('chapter.webtoon_id', webtoonId)
       .range(from, to),
   )
 
-  return new Map(rows.map((row) => [row.chapter_id, row.read_count]))
+  return {
+    readCounts: new Map(rows.map((row) => [row.chapter_id, row.read_count])),
+    reactedIds: new Set(rows.filter((row) => row.rating != null || row.emotion != null).map((row) => row.chapter_id)),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,4 +135,109 @@ export async function markNextChapter(
 
   await markChaptersRead(next.id, false)
   return Number(next.number)
+}
+
+// ---------------------------------------------------------------------------
+// Page d'un chapitre
+// ---------------------------------------------------------------------------
+export async function getChapterDetails(chapterId: string): Promise<ChapterDetails> {
+  const { data, error } = await supabase
+    .from('chapter')
+    .select('id, number, published_at, webtoon(id, anilist_id, title, cover_url, banner_url)')
+    .eq('id', chapterId)
+    .single()
+
+  if (error) throw new Error(error.message)
+
+  const row = data as unknown as {
+    id: string
+    number: number
+    published_at: string | null
+    webtoon: { id: string; anilist_id: number | null; title: string; cover_url: string | null; banner_url: string | null }
+  }
+
+  return {
+    id: row.id,
+    number: Number(row.number),
+    publishedAt: row.published_at,
+    webtoon: {
+      id: row.webtoon.id,
+      anilistId: row.webtoon.anilist_id,
+      title: row.webtoon.title,
+      coverUrl: row.webtoon.cover_url,
+      bannerUrl: row.webtoon.banner_url,
+    },
+  }
+}
+
+export async function getMyChapterRead(chapterId: string): Promise<MyChapterRead | null> {
+  const { data, error } = await supabase
+    .from('chapter_read')
+    .select('read_count, rating, emotion, first_read_at')
+    .eq('chapter_id', chapterId)
+    .maybeSingle()
+
+  if (error) throw new Error(error.message)
+  if (!data) return null
+
+  return {
+    readCount: data.read_count,
+    rating: data.rating,
+    emotion: data.emotion,
+    firstReadAt: data.first_read_at,
+  }
+}
+
+// Nombre de chapitres non lus avant un numéro, calculé par la base
+// (la page d'un chapitre ne charge pas toute la liste)
+export async function countUnreadBefore(webtoonId: string, chapterNumber: number): Promise<number> {
+  const [all, read] = await Promise.all([
+    // head: true → on ne récupère que le COMPTE, pas les lignes
+    supabase
+      .from('chapter')
+      .select('id', { count: 'exact', head: true })
+      .eq('webtoon_id', webtoonId)
+      .lt('number', chapterNumber),
+    supabase
+      .from('chapter_read')
+      .select('chapter_id, chapter!inner(webtoon_id, number)', { count: 'exact', head: true })
+      .eq('chapter.webtoon_id', webtoonId)
+      .lt('chapter.number', chapterNumber),
+  ])
+
+  if (all.error) throw new Error(all.error.message)
+  if (read.error) throw new Error(read.error.message)
+  return (all.count ?? 0) - (read.count ?? 0)
+}
+
+export async function getNeighborChapters(webtoonId: string, chapterNumber: number): Promise<ChapterNeighbors> {
+  const [previous, next] = await Promise.all([
+    supabase
+      .from('chapter')
+      .select('id')
+      .eq('webtoon_id', webtoonId)
+      .lt('number', chapterNumber)
+      .order('number', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('chapter')
+      .select('id')
+      .eq('webtoon_id', webtoonId)
+      .gt('number', chapterNumber)
+      .order('number', { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ])
+
+  return { previousId: previous.data?.id ?? null, nextId: next.data?.id ?? null }
+}
+
+// Note (1-5) ou émotion ; null pour retirer. Ne fonctionne que sur un chapitre lu.
+export async function updateMyChapterReaction(
+  chapterId: string,
+  changes: { rating?: number | null; emotion?: Emotion | null },
+): Promise<void> {
+  const { error } = await supabase.from('chapter_read').update(changes).eq('chapter_id', chapterId)
+  if (error) throw new Error(error.message)
 }

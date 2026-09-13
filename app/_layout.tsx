@@ -32,6 +32,8 @@ function RootNavigator() {
       <Stack.Protected guard={!!session}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="webtoon/[id]" options={{ title: 'Fiche' }} />
+        <Stack.Screen name="chapter/[id]" options={{ title: 'Chapitre' }} />
+        <Stack.Screen name="comments/[chapterId]" options={{ title: 'Commentaires' }} />
       </Stack.Protected>
 
       {/* Accessible seulement si NON connecté */}
