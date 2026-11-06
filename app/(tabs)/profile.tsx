@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Alert, Pressable, StyleSheet, Switch, Text, View } from 'react-native'
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
+import { StatsSection } from '@/components/StatsSection'
 import { supabase } from '@/lib/supabase'
 import { useProfile } from '@/providers/ProfileProvider'
 import { useSession } from '@/providers/SessionProvider'
@@ -28,11 +29,14 @@ export default function ProfileScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    // ScrollView : l'écran dépasse maintenant la hauteur du téléphone
+    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
       <View style={styles.identity}>
         <Text style={styles.title}>{profile?.username ?? '...'}</Text>
         <Text style={styles.email}>{session?.user.email}</Text>
       </View>
+
+      <StatsSection />
 
       <View style={styles.settingRow}>
         <View style={styles.settingText}>
@@ -52,12 +56,15 @@ export default function ProfileScreen() {
       <Pressable style={styles.button} onPress={() => supabase.auth.signOut()}>
         <Text style={styles.buttonText}>Se déconnecter</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, gap: 24 },
+  screen: { flex: 1 },
+  // Dans un ScrollView, le padding va sur contentContainerStyle, pas sur style.
+  // paddingBottom plus grand : de la place sous le bouton de déconnexion.
+  container: { padding: 20, paddingBottom: 48, gap: 24 },
   identity: { alignItems: 'center', gap: 4, marginTop: 24 },
   title: { fontSize: 20, fontWeight: 'bold' },
   email: { color: '#636e72' },
