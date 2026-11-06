@@ -1,3 +1,5 @@
+import { Ionicons } from '@expo/vector-icons'
+import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native'
 import { StatsSection } from '@/components/StatsSection'
@@ -6,6 +8,7 @@ import { useProfile } from '@/providers/ProfileProvider'
 import { useSession } from '@/providers/SessionProvider'
 
 export default function ProfileScreen() {
+  const router = useRouter()
   const { session } = useSession()
   const { profile, error: loadError, updateProfile } = useProfile()
   const [error, setError] = useState<string | null>(null)
@@ -35,6 +38,12 @@ export default function ProfileScreen() {
         <Text style={styles.title}>{profile?.username ?? '...'}</Text>
         <Text style={styles.email}>{session?.user.email}</Text>
       </View>
+
+      <Pressable style={styles.linkRow} onPress={() => router.push('/friends')}>
+        <Ionicons name="people" size={20} color="#6C5CE7" />
+        <Text style={styles.linkLabel}>Mes amis</Text>
+        <Ionicons name="chevron-forward" size={18} color="#b2bec3" />
+      </Pressable>
 
       <StatsSection />
 
@@ -66,6 +75,8 @@ const styles = StyleSheet.create({
   // paddingBottom plus grand : de la place sous le bouton de déconnexion.
   container: { padding: 20, paddingBottom: 48, gap: 24 },
   identity: { alignItems: 'center', gap: 4, marginTop: 24 },
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#eee' },
+  linkLabel: { flex: 1, fontSize: 16 },
   title: { fontSize: 20, fontWeight: 'bold' },
   email: { color: '#636e72' },
   settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#eee' },

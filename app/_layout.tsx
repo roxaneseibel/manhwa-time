@@ -34,6 +34,7 @@ function RootNavigator() {
         <Stack.Screen name="webtoon/[id]" options={{ title: 'Fiche' }} />
         <Stack.Screen name="chapter/[id]" options={{ title: 'Chapitre' }} />
         <Stack.Screen name="comments/[chapterId]" options={{ title: 'Commentaires' }} />
+        <Stack.Screen name="friends" options={{ title: 'Mes amis' }} />
       </Stack.Protected>
 
       {/* Accessible seulement si NON connecté */}
