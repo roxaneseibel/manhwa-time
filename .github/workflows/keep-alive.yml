@@ -1,0 +1,68 @@
+# =============================================================================
+# Garde le projet Supabase éveillé
+#
+# Le plan gratuit de Supabase met en pause les projets « à faible activité »
+# sur une période de 7 jours. En développement, l'app ne tourne que quand on la
+# lance : il suffit de deux semaines sans y toucher pour que le projet
+# s'endorme — et le symptôme est trompeur, l'app affiche « Network request
+# failed » comme si le code était en cause.
+#
+# Ce workflow fait une vraie requête HTTP depuis les serveurs de GitHub, tous
+# les 3 jours. Pourquoi pas un script sur l'ordinateur ? Parce qu'il faudrait
+# qu'il soit allumé au bon moment — ce qui est exactement le problème.
+#
+# Il sert aussi de surveillance : si la requête échoue, le workflow échoue et
+# GitHub envoie un e-mail. On apprend donc que le projet est en panne ou en
+# pause sans avoir à ouvrir l'app.
+#
+# ⚠️ GitHub désactive les workflows planifiés après 60 jours sans activité sur
+#    le dépôt. Si tu ne pousses rien pendant deux mois, repasse ici et clique
+#    sur « Enable workflow ».
+# =============================================================================
+
+name: Keep Supabase alive
+
+on:
+  schedule:
+    # Tous les 3 jours à 6 h UTC. Les horaires de GitHub sont approximatifs
+    # (parfois décalés de plusieurs dizaines de minutes) : sans importance ici.
+    - cron: '0 6 */3 * *'
+  # Permet de le lancer à la main depuis l'onglet Actions (pour le tester)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Interroger la base
+        # Ces deux valeurs sont publiques par nature : elles sont déjà dans
+        # lib/supabase.ts, donc dans le bundle de l'application. C'est la RLS
+        # qui protège les données, pas le secret de la clé. La clé service_role,
+        # elle, ne doit JAMAIS apparaître ici.
+        env:
+          SUPABASE_URL: https://dhcxtooelukyrwybysfi.supabase.co
+          SUPABASE_KEY: sb_publishable_CDfB8T7CIL1s-b770sP8HQ_IEaXT6eB
+        run: |
+          # Une lecture minuscule sur une table publique : "genre" est lisible
+          # par tout le monde et ne contient aucune donnée personnelle.
+          # -s silencieux, -o jette le corps, -w n'affiche que le code HTTP
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            --max-time 30 \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            "$SUPABASE_URL/rest/v1/genre?select=name&limit=1")
+
+          echo "Réponse HTTP : $code"
+
+          if [ "$code" = "200" ]; then
+            echo "✅ Projet actif"
+            exit 0
+          fi
+
+          echo "❌ Le projet ne répond pas correctement."
+          echo "   000 → nom de domaine introuvable : le projet est très"
+          echo "         probablement EN PAUSE, à réactiver dans le dashboard."
+          echo "   401 → la clé publishable a changé (Settings > API)."
+          exit 1
