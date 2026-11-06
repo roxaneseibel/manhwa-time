@@ -424,3 +424,11 @@ entrypoint = "./functions/import-webtoon/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/import-webtoon/*.html" ]
+
+[functions.sync-chapters]
+enabled = true
+# Pas de jeton d'utilisateur : l'appelant est Supabase Cron.
+# La fonction se protège elle-même avec l'en-tête x-sync-secret.
+verify_jwt = false
+import_map = "./functions/sync-chapters/deno.json"
+entrypoint = "./functions/sync-chapters/index.ts"
